@@ -1,0 +1,8 @@
+ARGS = ["8388608"]
+[ Info: Solving the problem
+Parameter number: 8388608
+Minimum time: 131.304385 ms
+Allocs: 148
+Parameter number: 8388608
+Minimum time: 54.072823 ms
+Allocs: 145

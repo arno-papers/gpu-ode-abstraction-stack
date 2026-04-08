@@ -1,0 +1,56 @@
+======================================================================
+Direct CUDA Benchmark — Lorenz ODE
+======================================================================
+Device: Tesla V100-SXM2-32GB
+Compiler backend: nvcc
+
+Correctness:
+  Tsit5-CUDA               : x=-6.450583 y=-8.895216 z=14.649150  err=4.51e-06 [OK]
+  Tsit5-adp-CUDA           : x=-6.450583 y=-8.895214 z=14.649150  err=4.03e-06 [OK]
+
+
+--- block_size=64 ---
+           N       Tsit5   Tsit5-adp
+           8      0.18ms      0.08ms
+          32      0.18ms      0.08ms
+         128      0.18ms      0.08ms
+         512      0.18ms      0.08ms
+       2,048      0.18ms      0.08ms
+       8,192      0.33ms      0.09ms
+      32,768      0.63ms      0.13ms
+     131,072      2.11ms      0.32ms
+     524,288      8.20ms      1.08ms
+   2,097,152     30.89ms      4.05ms
+   8,388,608    121.85ms     15.88ms
+
+--- block_size=128 ---
+           N       Tsit5   Tsit5-adp
+           8      0.18ms      0.08ms
+          32      0.18ms      0.08ms
+         128      0.18ms      0.08ms
+         512      0.18ms      0.08ms
+       2,048      0.18ms      0.08ms
+       8,192      0.19ms      0.08ms
+      32,768      0.63ms      0.13ms
+     131,072      1.96ms      0.30ms
+     524,288      7.75ms      1.07ms
+   2,097,152     30.75ms      4.04ms
+   8,388,608    121.84ms     15.88ms
+
+--- block_size=256 ---
+           N       Tsit5   Tsit5-adp
+           8      0.18ms      0.07ms
+          32      0.18ms      0.08ms
+         128      0.18ms      0.08ms
+         512      0.33ms      0.10ms
+       2,048      0.33ms      0.11ms
+       8,192      0.33ms      0.11ms
+      32,768      0.62ms      0.13ms
+     131,072      2.11ms      0.32ms
+     524,288      7.75ms      1.11ms
+   2,097,152     30.59ms      4.10ms
+   8,388,608    121.96ms     15.94ms
+
+Wrote results/cuda_lorenz_fixed.csv
+
+Wrote results/cuda_lorenz_adaptive.csv

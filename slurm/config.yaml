@@ -1,0 +1,33 @@
+# Snakemake SLURM profile for VSC genius cluster
+#
+# Usage: snakemake --profile slurm --jobs 7
+#
+# VSC's --clusters=genius makes sbatch --parsable return "JOBID;genius".
+# The submit wrapper strips the ";genius" suffix so snakemake gets a clean numeric jobid.
+# The status/cancel wrappers handle the -M genius flag for sacct/scancel.
+
+executor: cluster-generic
+cluster-generic-submit-cmd: >-
+  bash slurm/submit.sh
+  --account=intro_vsc32553
+  --clusters=genius
+  --partition={resources.slurm_partition}
+  --nodes=1
+  --ntasks=1
+  --cpus-per-task=4
+  --gpus-per-node={resources.gpu}
+  --time={resources.runtime}
+  --export=ALL
+  --output=slurm_logs/%j.out
+  --error=slurm_logs/%j.err
+  --parsable
+cluster-generic-status-cmd: bash slurm/status.sh
+cluster-generic-cancel-cmd: bash slurm/cancel.sh
+
+default-resources:
+  - slurm_partition=gpu_v100
+  - runtime=60
+  - gpu=1
+
+jobs: 7
+retries: 1

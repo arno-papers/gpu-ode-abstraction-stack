@@ -1,0 +1,3 @@
+[submodule "GPUODEBenchmarks"]
+	path = GPUODEBenchmarks
+	url = https://github.com/utkarsh530/GPUODEBenchmarks.git

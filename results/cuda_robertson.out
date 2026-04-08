@@ -1,0 +1,43 @@
+======================================================================
+Direct CUDA Benchmark — Robertson stiff ODE (Level 4)
+======================================================================
+Device: Tesla V100-SXM2-32GB
+Compiler backend: nvcc
+Settings: rtol=1.0e-03 atol=1.0e-06 dt0=1.0e-04 tf=1e+05
+
+Correctness:
+  Rosenbrock23-CUDA: y=[0.01782790, 7.25892022e-08, 0.98217195]
+    max_err=3.80e-05  components=[3.80e-05, 1.58e-10, 3.79e-05]  [OK]
+
+Convergence test (Rosenbrock23, single trajectory):
+        rtol        atol     max_err      y1_err      y2_err      y3_err
+     1.0e-02     1.0e-05    1.26e-04    1.26e-04    5.24e-10    1.26e-04  
+     1.0e-03     1.0e-06    3.80e-05    3.80e-05    1.58e-10    3.78e-05  3.3x
+     1.0e-04     1.0e-07    1.06e-05    1.05e-05    4.35e-11    1.06e-05  3.6x
+     1.0e-05     1.0e-08    2.52e-06    2.52e-06    1.06e-11    2.42e-06  4.2x
+
+--- block_size=64 ---
+           N     Ros23-adp
+       1,024        0.04ms
+      10,240        0.05ms
+     102,400        0.12ms
+   1,024,000        1.00ms
+   8,388,608        7.94ms
+
+--- block_size=128 ---
+           N     Ros23-adp
+       1,024        0.04ms
+      10,240        0.04ms
+     102,400        0.12ms
+   1,024,000        1.00ms
+   8,388,608        7.94ms
+
+--- block_size=256 ---
+           N     Ros23-adp
+       1,024        0.05ms
+      10,240        0.05ms
+     102,400        0.12ms
+   1,024,000        1.01ms
+   8,388,608        7.94ms
+
+Wrote results/cuda_robertson.csv

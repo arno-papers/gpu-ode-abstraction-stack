@@ -1,0 +1,45 @@
+Reference (SciPy DOP853, f64): x=-6.4505791473, y=-8.8952114787, z=14.6491458666
+Tsit5 fixed  (f32, dt=0.001): max_err=1.64e-05
+Tsit5 adaptive (f32, 1e-8):   max_err=2.17e-06
+
+======================================================================
+JAX vmap Lorenz Benchmark (Level 2)
+======================================================================
+Device: Tesla V100-SXM2-32GB (gpu)
+JAX version: 0.9.2
+
+  Tsit5-fixed         N=         8:      1.20 ms
+  Tsit5-adaptive      N=         8:      1.99 ms
+
+  Tsit5-fixed         N=        32:      1.24 ms
+  Tsit5-adaptive      N=        32:      2.03 ms
+
+  Tsit5-fixed         N=       128:      1.21 ms
+  Tsit5-adaptive      N=       128:      2.01 ms
+
+  Tsit5-fixed         N=       512:      1.17 ms
+  Tsit5-adaptive      N=       512:      2.04 ms
+
+  Tsit5-fixed         N=     2,048:      1.25 ms
+  Tsit5-adaptive      N=     2,048:      2.26 ms
+
+  Tsit5-fixed         N=     8,192:      1.29 ms
+  Tsit5-adaptive      N=     8,192:      2.62 ms
+
+  Tsit5-fixed         N=    32,768:      1.87 ms
+  Tsit5-adaptive      N=    32,768:      4.15 ms
+
+  Tsit5-fixed         N=   131,072:      4.02 ms
+  Tsit5-adaptive      N=   131,072:      4.27 ms
+
+  Tsit5-fixed         N=   524,288:     17.92 ms
+  Tsit5-adaptive      N=   524,288:     11.03 ms
+
+  Tsit5-fixed         N= 2,097,152:     60.66 ms
+  Tsit5-adaptive      N= 2,097,152:     32.04 ms
+
+  Tsit5-fixed         N= 8,388,608:    229.55 ms
+  Tsit5-adaptive      N= 8,388,608:    115.88 ms
+
+Wrote results/jax_vmap_fixed.csv
+Wrote results/jax_vmap_adaptive.csv

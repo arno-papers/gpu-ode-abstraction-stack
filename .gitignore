@@ -1,0 +1,26 @@
+# LaTeX intermediates
+*.aux
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.log
+*.synctex.gz
+
+# Generated files (reproducible via generate_figures.py + results/)
+data_macros.tex
+validation_table.tex
+fig_*.pdf
+gpu_ode_benchmark_paper.pdf
+
+# Python
+__pycache__/
+*.pyc
+
+# Snakemake
+.snakemake/
+slurm_logs/
+
+# Editor
+*.swp
+*~

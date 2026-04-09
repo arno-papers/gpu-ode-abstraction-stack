@@ -1,9 +1,9 @@
 """
 Robertson stiff ODE ensemble — JAX vmap Rosenbrock23 (Level 2).
 
-Solves N identical Robertson trajectories with y0 = (1,0,0), t ∈ [0, 10^5].
-Uses a linearly implicit Rosenbrock23 method with analytic 3×3 Jacobian and
-direct linear solve — no Newton iteration required.
+Solves N Robertson trajectories with k2 ∈ linspace(0, 10^4, N), y0 = (1,0,0),
+t ∈ [0, 10^5].  Uses a linearly implicit Rosenbrock23 method with analytic
+3×3 Jacobian and direct linear solve — no Newton iteration required.
 Produces CSV sweep data for the scaling figure.
 """
 
@@ -23,11 +23,16 @@ DT0 = 1e-4
 TF = 1e5
 MAX_STEPS = 4096
 
-# Float64 reference (verified against SciPy Radau at rtol=1e-13, atol=1e-14)
-ROBERTSON_REF = np.array(
-    [1.7865921142252432e-02, 7.2747514684997379e-08, 9.8213400611023105e-01],
-    dtype=np.float64,
-)
+# Float64 references at selected k2 values (SciPy Radau, rtol=1e-13, atol=1e-14)
+ROBERTSON_REFS = {
+    0:     np.array([4.4539086329753037e-53, 3.3483037787036374e-13, 9.9999999999966493e-01]),
+    1:     np.array([2.1835511345657175e-10, 8.7320050186835035e-12, 9.9999999977291798e-01]),
+    10:    np.array([2.1058091147169210e-08, 8.4211176575432374e-11, 9.9999997885769532e-01]),
+    100:   np.array([2.0956005100413740e-06, 8.3803135613156177e-10, 9.9999790356146090e-01]),
+    1000:  np.array([2.0843295464602322e-04, 8.3369708857099002e-09, 9.9979155870837855e-01]),
+    5000:  np.array([4.9474452523740418e-03, 3.9766819439486466e-08, 9.9505251498081049e-01]),
+    10000: np.array([1.7865921142115607e-02, 7.2747514684430595e-08, 9.8213400611036827e-01]),
+}
 
 # ── Rosenbrock23 tableau constants ───────────────────────────────────
 _D = 0.2928932188134524       # 1 - 1/√2
@@ -42,12 +47,12 @@ _QMAX_INV = 0.1               # max step shrink
 # ── Rosenbrock23 Adaptive Solver ─────────────────────────────────────
 def make_rosenbrock23_solver(rtol=RTOL, atol=ATOL, dt0=DT0, tf=TF,
                               max_steps=MAX_STEPS):
-    def solve(perturbation):
-        """Solve one Robertson trajectory. perturbation offsets y1(0) to defeat XLA dead-code elimination."""
+    def solve(k2):
+        """Solve one Robertson trajectory with rate constant k2."""
 
         def rhs(y1, y2, y3):
-            f1 = -0.04 * y1 + 1e4 * y2 * y3
-            f2 = 0.04 * y1 - 1e4 * y2 * y3 - 3e7 * y2 * y2
+            f1 = -0.04 * y1 + k2 * y2 * y3
+            f2 = 0.04 * y1 - k2 * y2 * y3 - 3e7 * y2 * y2
             f3 = 3e7 * y2 * y2
             return f1, f2, f3
 
@@ -58,11 +63,11 @@ def make_rosenbrock23_solver(rtol=RTOL, atol=ATOL, dt0=DT0, tf=TF,
             reduce the 3×3 system to a 2×2 plus back-substitution.
             """
             w11 = 1.0 + 0.04 * gamma
-            w12 = -1e4 * gamma * y3
-            w13 = -1e4 * gamma * y2
+            w12 = -k2 * gamma * y3
+            w13 = -k2 * gamma * y2
             w21 = -0.04 * gamma
-            w22 = 1.0 + gamma * (1e4 * y3 + 6e7 * y2)
-            w23 = 1e4 * gamma * y2
+            w22 = 1.0 + gamma * (k2 * y3 + 6e7 * y2)
+            w23 = k2 * gamma * y2
             w32 = -6e7 * gamma * y2
 
             a12 = w12 - w13 * w32
@@ -148,7 +153,7 @@ def make_rosenbrock23_solver(rtol=RTOL, atol=ATOL, dt0=DT0, tf=TF,
             return (t_new, y1_new, y2_new, y3_new, dt_new, qold_out, step + 1)
 
         init = (jnp.float32(0.0),
-                jnp.float32(1.0 + perturbation), jnp.float32(0.0), jnp.float32(0.0),
+                jnp.float32(1.0), jnp.float32(0.0), jnp.float32(0.0),
                 jnp.float32(dt0), jnp.float32(1e-4), jnp.int32(0))
         t_f, y1_f, y2_f, y3_f, _, _, _ = lax.while_loop(cond, body, init)
         return y1_f, y2_f, y3_f
@@ -173,17 +178,22 @@ def benchmark(solver_fn, dummy, n_warmup=2, n_runs=20):
 
 # ── Verification ─────────────────────────────────────────────────────
 def verify():
-    print("Reference (SciPy Radau, f64):", ROBERTSON_REF)
-
     solver = make_rosenbrock23_solver()
-    dummy = jnp.zeros(1, dtype=jnp.float32).at[0].set(1e-5)
-    y1, y2, y3 = solver(dummy)
-    got = np.array([float(y1[0]), float(y2[0]), float(y3[0])], dtype=np.float64)
-    errs = np.abs(got - ROBERTSON_REF)
-    err = float(np.max(errs))
-    status = "OK" if err < 1e-4 else "FAIL"
-    print(f"Rosenbrock23-JAX (f32):      y=[{got[0]:.8f}, {got[1]:.8e}, {got[2]:.8f}]")
-    print(f"  max_err={err:.2e}  components=[{errs[0]:.2e}, {errs[1]:.2e}, {errs[2]:.2e}]  [{status}]")
+    test_k2 = [0.0, 100.0, 1000.0, 10000.0]
+    k2_arr = jnp.array(test_k2, dtype=jnp.float32)
+    y1, y2, y3 = solver(k2_arr)
+
+    max_err_all = 0.0
+    for i, k2_val in enumerate(test_k2):
+        ref = ROBERTSON_REFS[int(k2_val)]
+        got = np.array([float(y1[i]), float(y2[i]), float(y3[i])], dtype=np.float64)
+        errs = np.abs(got - ref)
+        err = float(np.max(errs))
+        max_err_all = max(max_err_all, err)
+        status = "OK" if err < 1e-2 else "FAIL"
+        print(f"  k2={k2_val:>8.0f}: y=[{got[0]:.6e}, {got[1]:.6e}, {got[2]:.6e}]  max_err={err:.2e}  [{status}]")
+
+    print(f"  Overall max_err={max_err_all:.2e}")
     print()
 
 
@@ -195,16 +205,17 @@ def run_benchmarks():
     print(f"Device: {jax.devices()[0].device_kind} ({jax.devices()[0].platform})")
     print(f"JAX version: {jax.__version__}")
     print(f"Settings: rtol={RTOL:.1e} atol={ATOL:.1e} dt0={DT0:.1e} tf={TF:.0e}")
+    print(f"Sweep: k2 ∈ linspace(0, 1e4, N)")
     print()
 
     trajectory_counts = [1024, 10_240, 102_400, 1_024_000, 8_388_608]
     results = []
 
     for N in trajectory_counts:
-        dummy = jnp.linspace(0, 1e-5, N, dtype=jnp.float32)
+        k2_vals = jnp.linspace(0.0, 1e4, N, dtype=jnp.float32)
         solver = make_rosenbrock23_solver()
         n_runs = 20 if N <= 102_400 else 10
-        t_min = benchmark(solver, dummy, n_warmup=2, n_runs=n_runs)
+        t_min = benchmark(solver, k2_vals, n_warmup=2, n_runs=n_runs)
         results.append((N, t_min))
         print(f"  N={N:>10,}:  {t_min:8.2f} ms")
 

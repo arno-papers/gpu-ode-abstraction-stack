@@ -209,175 +209,17 @@ rule jax_robertson:
         """
 
 # ---------------------------------------------------------------------------
-# Benchmark: JAX vmap Rosenbrock23 Robertson — generic (autodiff Jacobian)
-# Same solver as jax_robertson but with zero problem-specific knowledge
+# Benchmark: Julia Lorenz (Rung 3, DiffEqGPU 3.12.0 vectorized_solve/asolve)
+# Uses batch GPU API with make_prob_compatible
 # ---------------------------------------------------------------------------
-rule jax_robertson_generic:
+rule julia_lorenz:
     input:
-        "robertson_jax_generic.py"
+        "lorenz_julia.jl"
     output:
-        "results/jax_robertson_generic.out",
-        "results/jax_robertson_generic.csv",
-        "results/jax_robertson_autodiff_direct.csv"
+        "results/julia_lorenz.out"
     resources:
         slurm_partition="gpu_v100",
         runtime=30,
-        gpu=1
-    shell:
-        """
-        {PYTHON_MODULES}
-
-        if [ ! -d "{VENV_JAX}" ]; then
-            python3 -m venv "{VENV_JAX}"
-            source "{VENV_JAX}/bin/activate"
-            pip install --upgrade pip
-            pip install "jax[cuda12]" diffrax equinox
-        else
-            source "{VENV_JAX}/bin/activate"
-        fi
-
-        NVIDIA_LIB_DIRS=$(find "{VENV_JAX}/lib/python3.12/site-packages/nvidia" \
-            -maxdepth 2 -type d -name lib 2>/dev/null | paste -sd: -)
-        [ -n "${{NVIDIA_LIB_DIRS:-}}" ] && export LD_LIBRARY_PATH="$NVIDIA_LIB_DIRS:${{LD_LIBRARY_PATH:-}}"
-
-        PYTHONUNBUFFERED=1 python3 {input} 2>&1 | tee {output}
-        """
-
-# ---------------------------------------------------------------------------
-# Benchmark: Julia paper-era Lorenz (Rung 3, DiffEqGPU 2.1.0)
-# Re-runs the paper's exact bench_lorenz_gpu.jl on our V100
-# ---------------------------------------------------------------------------
-rule julia_paper_lorenz:
-    output:
-        "results/julia_paper_lorenz.out"
-    resources:
-        slurm_partition="gpu_v100",
-        runtime=120,
-        gpu=1
-    params:
-        n=N
-    shell:
-        """
-        {MODULE_PREAMBLE}
-
-        JULIA_BIN="{JULIA_185}"
-        DEPOT="{WORKDIR}/julia-depot-paper-1.8.5"
-        CUDA_ENV="{WORKDIR}/julia-cuda-env-1.8.5"
-
-        # Download Julia 1.8.5 if needed
-        if [ ! -x "$JULIA_BIN" ]; then
-            curl -L --fail --retry 3 \
-                "https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.5-linux-x86_64.tar.gz" \
-                -o "{WORKDIR}/julia-1.8.5-linux-x86_64.tar.gz"
-            tar -xzf "{WORKDIR}/julia-1.8.5-linux-x86_64.tar.gz" -C "{WORKDIR}"
-        fi
-
-        # Clone paper repo if needed
-        if [ ! -d "{PAPER_REPO}" ]; then
-            git clone --depth 1 https://github.com/utkarsh530/GPUODEBenchmarks.git "{PAPER_REPO}"
-        fi
-
-        export JULIA_DEPOT_PATH="$DEPOT"
-        export JULIA_LOAD_PATH="{PAPER_REPO}/GPU_ODE_Julia:$CUDA_ENV:@stdlib"
-        export JULIA_NUM_THREADS=4
-        export JULIA_CUDA_MEMORY_POOL=none
-
-        # Install CUDA.jl 4.1 sidecar env (paper-era driver)
-        "$JULIA_BIN" --project="$CUDA_ENV" -e '
-            using Pkg
-            Pkg.add(PackageSpec(name = "CUDA", version = "4.1"))
-        '
-
-        # Instantiate paper's pinned environment
-        cd "{PAPER_REPO}"
-        "$JULIA_BIN" --project=./GPU_ODE_Julia -e '
-            using Pkg; Pkg.instantiate(); Pkg.precompile()
-        '
-
-        # Run the paper's exact Lorenz script
-        "$JULIA_BIN" --project=./GPU_ODE_Julia \
-            ./GPU_ODE_Julia/bench_lorenz_gpu.jl {params.n} 2>&1 | tee {output}
-        """
-
-# ---------------------------------------------------------------------------
-# Benchmark: Julia paper-era Robertson (Rung 3, DiffEqGPU 2.5.1)
-# DiffEqGPU 2.1.0 doesn't export stiff solvers; 2.5.1 is the earliest that does
-# ---------------------------------------------------------------------------
-rule julia_robertson_25:
-    input:
-        "robertson_julia.jl"
-    output:
-        "results/julia_robertson_25.out",
-        "results/julia_robertson.csv"
-    resources:
-        slurm_partition="gpu_v100",
-        runtime=120,
-        gpu=1
-    params:
-        sweep="1024,10240,102400,1024000,8388608",
-        n=N
-    shell:
-        """
-        {MODULE_PREAMBLE}
-
-        JULIA_BIN="{JULIA_185}"
-        ENV_DIR="{WORKDIR}/julia-robertson-diffeqgpu25-env"
-        DEPOT="{WORKDIR}/julia-depot-diffeqgpu25-1.8.5"
-
-        if [ ! -x "$JULIA_BIN" ]; then
-            curl -L --fail --retry 3 \
-                "https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.5-linux-x86_64.tar.gz" \
-                -o "{WORKDIR}/julia-1.8.5-linux-x86_64.tar.gz"
-            tar -xzf "{WORKDIR}/julia-1.8.5-linux-x86_64.tar.gz" -C "{WORKDIR}"
-        fi
-
-        export JULIA_DEPOT_PATH="$DEPOT"
-        export JULIA_NUM_THREADS=4
-        export JULIA_CUDA_MEMORY_POOL=none
-        export JULIA_PKG_PRECOMPILE_AUTO=0
-
-        mkdir -p "$ENV_DIR"
-
-        # Install DiffEqGPU 2.5.1 (earliest with stiff GPU-kernel solvers)
-        "$JULIA_BIN" --project="$ENV_DIR" -e '
-            using Pkg
-            Pkg.add([
-                PackageSpec(name="BenchmarkTools"),
-                PackageSpec(name="CUDA", version="4.1"),
-                PackageSpec(name="DiffEqGPU", version="2.5.1"),
-                PackageSpec(name="OrdinaryDiffEq"),
-                PackageSpec(name="StaticArrays"),
-            ])
-        '
-
-        # Clear stale CSV (script appends)
-        rm -f results/julia_robertson.csv
-
-        # Scaling sweep (default tolerances)
-        echo "=== Robertson scaling sweep ===" | tee {output[0]}
-        "$JULIA_BIN" --project="$ENV_DIR" {input} \
-            {params.sweep} GPURosenbrock23 default default 2>&1 | tee -a {output[0]}
-
-        # Tight tolerances (N=8M only, for version-sensitivity table)
-        echo "" >> {output[0]}
-        echo "=== Robertson tight tolerances ===" | tee -a {output[0]}
-        "$JULIA_BIN" --project="$ENV_DIR" {input} \
-            {params.n} GPURosenbrock23 1e-6 1e-9 2>&1 | tee -a {output[0]}
-        """
-
-# ---------------------------------------------------------------------------
-# Benchmark: Latest Julia stack (DiffEqGPU 3.12.0, for version-sensitivity table)
-# Runs both Lorenz and Robertson with Julia 1.11.3 + CUDA.jl 5.11
-# ---------------------------------------------------------------------------
-rule julia_latest:
-    input:
-        lorenz="lorenz_julia.jl",
-        robertson="robertson_julia.jl"
-    output:
-        "results/julia_latest.out"
-    resources:
-        slurm_partition="gpu_v100",
-        runtime=120,
         gpu=1
     params:
         n=N
@@ -393,26 +235,45 @@ rule julia_latest:
         export JULIA_NUM_THREADS=4
         export JULIA_CUDA_MEMORY_POOL=none
         export JULIA_PKG_PRECOMPILE_AUTO=0
-
-        # CRITICAL: prevent CUDA_Driver_jll from loading compat driver v13.2
-        # which drops V100 (sm_70). System driver 580.95.05 still supports V100.
         export JULIA_CUDA_USE_COMPAT=false
 
-        echo "=== Latest Julia Lorenz ===" | tee {output}
-        "$JULIA_BIN" --project="$ENV_DIR" {input.lorenz} {params.n} 2>&1 | tee -a {output}
+        "$JULIA_BIN" --project="$ENV_DIR" {input} {params.n} 2>&1 | tee {output}
+        """
 
-        export RESULTS_CSV=results/julia_latest_robertson.csv
-        rm -f "$RESULTS_CSV"
+# ---------------------------------------------------------------------------
+# Benchmark: Julia Robertson (Rung 3, DiffEqGPU 3.12.0 vectorized_asolve)
+# Uses batch GPU API with make_prob_compatible for near-kernel performance
+# ---------------------------------------------------------------------------
+rule julia_robertson:
+    input:
+        "robertson_julia.jl"
+    output:
+        "results/julia_robertson.out",
+        "results/julia_robertson.csv"
+    resources:
+        slurm_partition="gpu_v100",
+        runtime=30,
+        gpu=1
+    params:
+        sweep="1024,10240,102400,1024000,8388608"
+    shell:
+        """
+        {MODULE_PREAMBLE}
 
-        echo "" >> {output}
-        echo "=== Latest Julia Robertson (default tol) ===" | tee -a {output}
-        "$JULIA_BIN" --project="$ENV_DIR" {input.robertson} \
-            {params.n} GPURosenbrock23 default default 2>&1 | tee -a {output}
+        JULIA_BIN="{JULIA_1113}"
+        DEPOT="{WORKDIR}/julia-depot-cuda12fix"
+        ENV_DIR="{WORKDIR}/julia-env-cuda12fix"
 
-        echo "" >> {output}
-        echo "=== Latest Julia Robertson (tight tol) ===" | tee -a {output}
-        "$JULIA_BIN" --project="$ENV_DIR" {input.robertson} \
-            {params.n} GPURosenbrock23 1e-6 1e-9 2>&1 | tee -a {output}
+        export JULIA_DEPOT_PATH="$DEPOT"
+        export JULIA_NUM_THREADS=4
+        export JULIA_CUDA_MEMORY_POOL=none
+        export JULIA_PKG_PRECOMPILE_AUTO=0
+        export JULIA_CUDA_USE_COMPAT=false
+
+        rm -f results/julia_robertson.csv
+
+        "$JULIA_BIN" --project="$ENV_DIR" {input} \
+            {params.sweep} GPURosenbrock23 2>&1 | tee {output[0]}
         """
 
 # ---------------------------------------------------------------------------
@@ -538,10 +399,8 @@ rule benchmarks:
     input:
         "results/jax_lorenz.out",
         "results/jax_robertson.out",
-        "results/jax_robertson_generic.out",
         "results/cuda_lorenz.out",
         "results/cuda_robertson.out",
-        "results/julia_paper_lorenz.out",
-        "results/julia_robertson_25.out",
-        "results/julia_latest.out",
+        "results/julia_lorenz.out",
+        "results/julia_robertson.out",
         "results/diffrax_latest.out"

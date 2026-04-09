@@ -159,18 +159,17 @@ hardware-floor reference.
 
 For nonstiff Lorenz, levels~2--4 cluster tightly, and
 \texttt{DiffEqGPU.jl}'s kernel generation proves highly effective.
-The picture changes for stiff problems.
-We introduce a Robertson benchmark using the Rosenbrock23 method,
-where per-step linear algebra dominates rather than kernel-launch
-overhead.
-Here, \texttt{DiffEqGPU.jl}'s general-purpose stiff kernel---which
-must handle arbitrary-dimension systems with generic Jacobian
-computation and linear solvers---is orders of magnitude slower than
-problem-specialized implementations at levels~2 and~4 that exploit
-the $3 \times 3$ Robertson structure with analytic Jacobians and
-direct solves.
-This contrast illustrates how the performance landscape shifts
-with problem type.
+For stiff problems, we introduce a Robertson benchmark using
+the Rosenbrock23 method, where per-step linear algebra
+dominates.
+Using \texttt{DiffEqGPU.jl}'s batch GPU API
+(\texttt{vectorized\_asolve}), levels~2--4 again cluster
+tightly---\texttt{DiffEqGPU.jl} sits between the hand-written
+CUDA kernel and JAX \texttt{vmap}, consistent with the nonstiff
+results.
+However, the high-level \texttt{solve} API adds $>$400$\times$
+overhead, illustrating how API choice---not kernel
+architecture---can dominate stiff GPU performance.
 
 % ====================================================================
 \section{Methodology}
@@ -193,10 +192,15 @@ float32.
 Trajectory counts: $N$ up to $8{,}388{,}608 = 2^{23}$.
 
 \paragraph{Robertson kinetics (stiff).}
-Standard 3-state Robertson system with initial condition
-$(1, 0, 0)$, $t \in [0, 10^5]$, using the Rosenbrock23 method.
+Standard 3-state Robertson system with rate constant
+$k_2 \in \mathrm{linspace}(0, 10^4, N)$ per trajectory,
+initial condition $(1, 0, 0)$, $t \in [0, 10^5]$,
+using the Rosenbrock23 method.
 Tested at default tolerances
 ($\mathrm{rtol}=10^{-3}$, $\mathrm{atol}=10^{-6}$).
+The parameter sweep matches the original paper's setup and
+produces a mix of non-stiff ($k_2 \approx 0$) to maximally
+stiff ($k_2 = 10^4$) trajectories.
 
 \subsection{Implementations at each level}
 
@@ -217,10 +221,14 @@ stiff Rosenbrock23, with no library dependencies beyond JAX.
 
 \textbf{Level~3 (\texttt{DiffEqGPU.jl}):}
 We re-ran the paper's exact Lorenz script on our V100.
-For the stiff Robertson problem, we used the earliest
-\texttt{DiffEqGPU} version exporting stiff GPU-kernel solvers.
-Version details and sensitivity analysis are in
-Section~\ref{sec:versions}.
+For the stiff Robertson problem, we used
+\texttt{DiffEqGPU}~3.12.0's \texttt{vectorized\_asolve} batch
+API, which pre-builds all problems on the host and solves them
+in a single GPU kernel launch.
+This requires \texttt{make\_prob\_compatible} to convert
+problems to a GPU-compatible layout before transferring to
+device memory.
+Version details are in Section~\ref{sec:versions}.
 
 \textbf{Level~4 (CUDA):}
 Hand-written CUDA kernels via CuPy \texttt{RawKernel}, one thread
@@ -233,15 +241,18 @@ Diffrax does not implement Rosenbrock methods; its closest stiff
 solver is Kvaerno3, an implicit SDIRK method requiring Newton
 iteration, so we exclude level~1 from the stiff comparison to
 avoid a method-choice confound.
-At levels~2 and~4, we implement the same Rosenbrock23
-method~\cite{hairer_wanner} as level~3, exploiting the Robertson
-system's $3 \times 3$ structure with an analytic Jacobian and
-direct linear solve---approximately 100~lines of JAX or CUDA code.
-\texttt{DiffEqGPU.jl}'s \texttt{GPURosenbrock23} (level~3) is a
-general-purpose solver that does not accept user-provided Jacobians
-or system-specific specializations.
-The original paper did not benchmark stiff problems at levels~1
-or~2.
+At all three remaining levels, the solver receives an analytic
+Jacobian: at levels~2 and~4 this is hand-coded into the solver
+(approximately 100~lines of JAX or CUDA), while at level~3 it is
+passed via \texttt{ODEFunction}'s \texttt{jac} keyword and used by
+the \texttt{vectorized\_asolve} kernel.
+Levels~2 and~4 additionally exploit the Robertson system's
+$3 \times 3$ structure with a direct linear solve (2$\times$2
+reduction plus back-substitution).
+The original paper benchmarked stiff Robertson at levels~1
+and~3 (Diffrax and DiffEqGPU.jl), showing a 76--130$\times$
+advantage for kernel generation---but did not include a level-2
+comparison.
 
 \subsection{Timing protocol}
 
@@ -274,9 +285,8 @@ Figure~\ref{fig:validation} shows the reference solutions.
 \caption{Reference solutions for both benchmark problems.
 Left: Lorenz final state at $t = 1$ as a function of the
 ensemble parameter~$\rho$.
-Right: Robertson dynamics over $t \in [0, 10^5]$ showing the
-characteristic stiff transient ($y_2$ peaks near $t \approx
-10^{-5}$) followed by slow decay.
+Right: Robertson final state at $t = 10^5$ as a function of the
+rate constant~$k_2$.
 All GPU implementations (not shown) agree with these curves to
 within the errors reported in Table~\ref{tab:validation}.}
 \label{fig:validation}
@@ -287,9 +297,9 @@ within the errors reported in Table~\ref{tab:validation}.}
 % Data sources for inline numbers and tables:
 %   Lorenz (Diffrax rerun):      results/diffrax_latest.out
 %   Lorenz (JAX vmap):           results/jax_vmap_{fixed,adaptive}.csv
-%   Lorenz (Julia 2.1.0 rerun):  results/julia_paper_lorenz.out
+%   Lorenz (Julia pre-regression): results/julia_paper_lorenz.out
 %   Lorenz (CUDA kernel):        results/cuda_lorenz_{fixed,adaptive}.csv
-%   Lorenz (Julia 3.12.0):       results/julia_latest.out
+%   Lorenz (Julia latest tested): results/julia_lorenz.out
 %   Robertson (JAX vmap):        results/jax_robertson.csv
 %   Robertson (CUDA kernel):     results/cuda_robertson.out
 %   Robertson (Julia 2.5.1):     results/julia_robertson_25.out
@@ -310,7 +320,7 @@ Level & Method & Fixed (ms) & Adaptive (ms) \\
 \midrule
 1 & Diffrax\textsuperscript{a}  & \DiffraxLorenzFixed & \DiffraxLorenzAdaptive \\
 2 & JAX vmap                    & \JAXLorenzFixed      & \JAXLorenzAdaptive \\
-3 & DiffEqGPU.jl                & \JuliaLorenzFixed      & \JuliaLorenzAdaptive \\
+3 & DiffEqGPU.jl\textsuperscript{b}  & \JuliaLorenzFixed      & \JuliaLorenzAdaptive \\
 4 & CUDA kernel                 & \CUDALorenzFixed      & \CUDALorenzAdaptive \\
 \bottomrule
 \end{tabular}
@@ -319,7 +329,13 @@ Level & Method & Fixed (ms) & Adaptive (ms) \\
 {\footnotesize
 \textsuperscript{a}Timed with \texttt{block\_until\_ready()}.
 The paper's archived number (10{,}038\,ms fixed) did not include
-GPU synchronization.}
+GPU synchronization.
+\textsuperscript{b}Pre-regression Lorenz result from the paper-era
+\texttt{DiffEqGPU} stack (Julia~1.8.5). On the latest tested stack
+(\texttt{DiffEqGPU~3.12.0} / Julia~1.11.3), fixed stepping still
+reaches ${\sim}$132\,ms with \texttt{save\_everystep=false}, but
+adaptive stepping regresses to ${\sim}$357\,ms; see
+Section~\ref{sec:versions}.}
 \caption{Nonstiff Lorenz Tsit5 at $N = 8{,}388{,}608$ on
 Tesla~V100.}
 \label{tab:lorenz}
@@ -374,7 +390,8 @@ FSAL (First Same As Last) reuse of the final Runge--Kutta stage.
 
 Table~\ref{tab:robertson} presents the stiff Robertson comparison
 across levels~2--4, all using the same Rosenbrock23
-method~\cite{hairer_wanner}.
+method~\cite{hairer_wanner} with a parameter sweep
+$k_2 \in [0, 10^4]$.
 Diffrax is omitted because it does not implement Rosenbrock
 methods; its closest stiff solver (Kvaerno3, an implicit SDIRK
 method) would introduce a method-choice confound.
@@ -382,28 +399,26 @@ Figure~\ref{fig:bars_stiff} visualizes the gaps.
 
 \begin{table}[t]
 \centering
-\begin{tabular}{@{}cllr@{}}
+\begin{tabular}{@{}clr@{}}
 \toprule
-Level & Method & Jacobian / solve & Time (ms) \\
+Level & Method & Time (ms) \\
 \midrule
-2 & JAX vmap          & analytic + direct    & \JAXRobertson \\
-2 & JAX autodiff      & \texttt{jacfwd} + direct  & \JAXRobertsonAutodiffDirect \\
-2 & JAX generic       & \texttt{jacfwd} + Cramer  & \JAXRobertsonGeneric \\
-3 & DiffEqGPU.jl      & generic (no user control) & \JuliaRobertson \\
-4 & CUDA kernel       & analytic + direct    & \CUDARobertson \\
+2 & JAX vmap          & \JAXRobertson \\
+3 & DiffEqGPU.jl\textsuperscript{a}      & \JuliaRobertson \\
+4 & CUDA kernel       & \CUDARobertson \\
 \bottomrule
 \end{tabular}
 
 \smallskip
 {\footnotesize
+\textsuperscript{a}DiffEqGPU~3.12.0, \texttt{vectorized\_asolve}
+batch API with user-provided Jacobian;
+see Section~\ref{sec:versions}.
+
 Default tolerances ($\mathrm{rtol}=10^{-3}$,
-$\mathrm{atol}=10^{-6}$), $N = 8{,}388{,}608$.
-All rows use Rosenbrock23 with identical tolerances.
-The three level-2 variants isolate the effect of
-problem-specific knowledge: even with zero specialization
-(autodiff Jacobian, generic Cramer solve), JAX
-\texttt{vmap} is $\RatioGenericJuliaRobertson\times$ faster
-than level~3.}
+$\mathrm{atol}=10^{-6}$), $N = 8{,}388{,}608$,
+$k_2 \in \mathrm{linspace}(0, 10^4, N)$.
+All rows use Rosenbrock23.}
 \caption{Stiff Robertson Rosenbrock23 at $N = 8{,}388{,}608$ on
 Tesla~V100.}
 \label{tab:robertson}
@@ -413,10 +428,10 @@ Tesla~V100.}
 \centering
 \includegraphics[width=0.6\textwidth]{fig_bars_stiff.pdf}
 \caption{Stiff Robertson performance at $N = 8{,}388{,}608$.
-All three methods use Rosenbrock23 with identical tolerances.
-CUDA (level~4) is $\RatioCUDAJAXRobertson\times$ faster than JAX \texttt{vmap}
-(level~2), which is $\RatioJAXJuliaRobertson\times$ faster than
-\texttt{DiffEqGPU.jl} (level~3).}
+CUDA (level~4) is $\RatioCUDAJuliaRobertson\times$ faster than
+\texttt{DiffEqGPU.jl} (level~3), which is
+$\RatioJuliaJAXRobertson\times$ faster than JAX \texttt{vmap}
+(level~2).}
 \label{fig:bars_stiff}
 \end{figure}
 
@@ -424,49 +439,35 @@ CUDA (level~4) is $\RatioCUDAJAXRobertson\times$ faster than JAX \texttt{vmap}
 \centering
 \includegraphics[width=0.6\textwidth]{fig_scaling_stiff.pdf}
 \caption{Stiff Robertson scaling behavior.
-CUDA and JAX \texttt{vmap} are sublinear in $N$, benefiting
-from GPU saturation at large trajectory counts.
-\texttt{DiffEqGPU.jl} scales linearly, with its per-trajectory
-overhead growing from $34\times$ (CUDA) at $N = 1{,}024$ to
-$1{,}461\times$ at $N = 8\text{M}$.}
+All three levels show sublinear scaling at large $N$,
+clustering within a small factor---consistent with the
+nonstiff Lorenz results.}
 \label{fig:scaling_stiff}
 \end{figure}
 
-The stiff results preserve the level hierarchy seen in the nonstiff case.
-At level~4, the CUDA kernel (\CUDARobertson\,ms) is $\RatioCUDAJAXRobertson\times$ faster than
-the fully specialized JAX \texttt{vmap} Rosenbrock23 at level~2 (\JAXRobertson\,ms);
-the CUDA kernel's advantage comes from explicit control over
-register allocation and launch configuration.
+The stiff results reinforce the level hierarchy seen in the
+nonstiff case.
+The CUDA kernel (\CUDARobertson\,ms), \texttt{DiffEqGPU.jl}
+(\JuliaRobertson\,ms), and JAX \texttt{vmap}
+(\JAXRobertson\,ms) cluster within a factor of
+$\RatioCUDAJAXRobertson\times$, with \texttt{DiffEqGPU.jl}'s
+kernel generation again placing it between hand-written CUDA
+and idiomatic JAX.
 
-To isolate the effect of problem-specific knowledge, we implemented
-two additional level-2 variants.
-The ``autodiff+direct'' variant replaces the hand-coded Jacobian
-with \texttt{jax.jacfwd} but retains the structure-exploiting
-linear solve (\JAXRobertsonAutodiffDirect\,ms).
-The ``generic'' variant uses \texttt{jax.jacfwd} and a
-full Cramer-rule solve with no structural knowledge whatsoever
-(\JAXRobertsonGeneric\,ms).
-These two are nearly identical in cost, showing that the
-linear-solve strategy is not the bottleneck---the Jacobian
-computation dominates.
-Crucially, even the fully generic JAX variant is
-$\RatioGenericJuliaRobertson\times$ faster than
-\texttt{DiffEqGPU.jl} (\JuliaRobertson\,ms),
-demonstrating that the gap is architectural rather than a
-consequence of problem specialization.
-
-\texttt{DiffEqGPU.jl}'s \texttt{GPURosenbrock23} does not
-accept user-provided Jacobians or system-specific
-specializations (confirmed by the library maintainers).
-Adding such an interface---analogous to the \texttt{jac}
-keyword in SciPy or DifferentialEquations.jl's CPU
-solvers---could substantially close the gap for small systems
-with known structure.
-Tightening tolerances from $10^{-3}$/$10^{-6}$ to
-$10^{-6}$/$10^{-9}$ changes the level~3 timing by
-$\JuliaRobertsonTolPct$\%
-(Table~\ref{tab:versions}), confirming that per-step
-overhead rather than solver work dominates.
+A critical finding is the distinction between
+\texttt{DiffEqGPU.jl}'s two APIs.
+The high-level \texttt{solve} API---the documented entry
+point for ensemble problems---dispatches each trajectory
+individually, incurring host--device round-trips that
+dominate at large $N$.
+In our testing, \texttt{solve} takes ${\sim}$11{,}600\,ms
+for the same problem, a $>$400$\times$ overhead over the
+batch \texttt{vectorized\_asolve} API reported in
+Table~\ref{tab:robertson}.
+The batch API requires manual problem construction
+(\texttt{make\_prob\_compatible}, explicit \texttt{cu()}
+transfer) but achieves near-kernel-level performance by
+solving all trajectories in a single GPU launch.
 
 % ====================================================================
 \section{Discussion}
@@ -498,108 +499,83 @@ Its position at level~3---delivering \JuliaLorenzFixed\,ms where hand-written
 CUDA gives \CUDALorenzFixed\,ms for fixed stepping---represents a genuine
 engineering achievement.
 
-However, this favorable position does not extend to stiff
-problems.
-For nonstiff Lorenz, level~3 (\JuliaLorenzAdaptive\,ms adaptive) is $\RatioDiffraxJuliaAdaptive\times$
-\emph{faster} than Diffrax (\DiffraxLorenzAdaptive\,ms); for stiff Robertson
-it is $\RatioGenericJuliaRobertson\times$ \emph{slower} than
-a fully generic level-2 JAX implementation that uses no
-problem-specific knowledge
-(\JuliaRobertson\,ms vs.\ \JAXRobertsonGeneric\,ms).
+This favorable position extends to stiff problems when using
+the batch GPU API: for Robertson, \texttt{DiffEqGPU.jl}'s
+\texttt{vectorized\_asolve} (\JuliaRobertson\,ms) sits between
+the CUDA kernel (\CUDARobertson\,ms) and JAX \texttt{vmap}
+(\JAXRobertson\,ms), consistent with the nonstiff ordering.
 
-The architectural explanation tracks the nonstiff analysis.
-For explicit methods, kernel-launch overhead is the dominant cost
-at level~1, and \texttt{DiffEqGPU.jl}'s kernel generation
-eliminates exactly that bottleneck.
-For stiff methods, per-step infrastructure overhead dominates,
-and the kernel-generation advantage no longer compensates.
-The specialization gradient in Table~\ref{tab:robertson} shows
-that the gap is not attributable to hand-coded Jacobians:
-stripping all problem knowledge from the level-2 implementation
-costs only $\RatioSpecializedGenericRobertson\times$, while the
-remaining $\RatioGenericJuliaRobertson\times$ gap to level~3
-reflects architectural overhead in \texttt{DiffEqGPU.jl}'s
-stiff kernel.
+However, the choice of API and version is critical.
+The high-level \texttt{solve} interface---which handles
+ensemble dispatch, output collection, and callback
+support---adds $>$400$\times$ overhead for stiff problems,
+placing level~3 far behind level~2.
+The batch \texttt{vectorized\_asolve} API bypasses this
+dispatch layer, achieving competitive performance at the cost
+of requiring manual problem construction.
+Both the nonstiff Lorenz and stiff Robertson results use batch
+APIs; however, Table~\ref{tab:lorenz} retains the paper-era
+Lorenz numbers because the latest tested \texttt{DiffEqGPU}
+stack still regresses adaptive nonstiff performance
+substantially. Fixed stepping can be recovered on the latest
+stack with explicit \texttt{save\_everystep=false}, but
+adaptive stepping remains much slower
+(Section~\ref{sec:versions}).
 
 \subsection{Reproducibility and version sensitivity}
 \label{sec:versions}
 
 Python-side benchmarks used JAX~0.9.2 and Diffrax~0.7.2 (with
 \texttt{block\_until\_ready()} for correct GPU synchronization).
-Reproducing the Julia results required navigating three different
-package stacks (Table~\ref{tab:versions}).
-The paper's repository pins \texttt{DiffEqGPU~2.1.0}, which only
-exports nonstiff GPU-kernel solvers; the stiff results discussed
-in the paper cannot be reproduced from the released code.
-The earliest version exporting stiff GPU-kernel solvers is
-\texttt{DiffEqGPU~2.5.1}.
+The Julia results use two different \texttt{DiffEqGPU} versions,
+reflecting the state of the library's GPU APIs:
 
-\begin{table}[t]
-\centering
-\small
-\begin{tabular}{@{}llrrl@{}}
-\toprule
-DiffEqGPU & Julia & Fixed (ms) & Adaptive (ms) & Notes \\
-\midrule
-\multicolumn{5}{@{}l}{\emph{Lorenz, $N = 8{,}388{,}608$}} \\
-2.1.0 (paper) & 1.8.5 & \JuliaLorenzFixed & \JuliaLorenzAdaptive & paper's pinned stack \\
-3.12.0        & 1.11.3 & \JuliaLatestLorenzFixed & \JuliaLatestLorenzAdaptive &
-$\JuliaLatestRegressionFixed\times$ regression \\
-\midrule
-\multicolumn{5}{@{}l}{\emph{Robertson, $N = 8{,}388{,}608$}} \\
-2.1.0 (paper) & 1.8.5 &
-\multicolumn{2}{c}{--- not available ---} &
-stiff solvers not exported \\
-2.5.1         & 1.8.5 &
-\multicolumn{2}{c}{\JuliaRobertson} &
-earliest stiff support \\
-2.5.1 (tight) & 1.8.5 &
-\multicolumn{2}{c}{\JuliaRobertsonTight} &
-tol $10^{-6}$/$10^{-9}$: $+$\JuliaRobertsonTolPct\% \\
-3.12.0        & 1.11.3 &
-\multicolumn{2}{c}{\JuliaLatestRobertsonDefault} &
-latest stack \\
-3.12.0 (tight) & 1.11.3 &
-\multicolumn{2}{c}{\JuliaLatestRobertsonTight} &
-tol $10^{-6}$/$10^{-9}$ \\
-\bottomrule
-\end{tabular}
-\caption{\texttt{DiffEqGPU.jl} performance across versions.
-The Lorenz result---the basis of the headline
-claim---exhibits a $160\times$ regression on the latest stack.
-Robertson timing is insensitive to tolerance, changing by
-$<$2\% when tolerances are tightened $1{,}000\times$.
-All main results use the paper-era versions,
-which are the most favorable to Julia.}
-\label{tab:versions}
-\end{table}
+\begin{itemize}
+\item \textbf{Lorenz (nonstiff):} \texttt{DiffEqGPU~2.1.0} with
+Julia~1.8.5, using the \texttt{vectorized\_solve}/\texttt{vectorized\_asolve}
+batch API and \texttt{cu(probs)} to transfer problems to the GPU.
+Table~\ref{tab:lorenz} keeps these pre-regression numbers because,
+on the latest tested stack (\texttt{DiffEqGPU~3.12.0},
+Julia~1.11.3, CUDA.jl~5.11.0 on Tesla~V100), adaptive nonstiff
+performance remains much slower:
+\texttt{vectorized\_asolve} takes ${\sim}$357\,ms instead of
+54\,ms. Fixed stepping is not the limiting issue on the current
+stack: with explicit \texttt{save\_everystep=false},
+\texttt{vectorized\_solve} still runs in ${\sim}$132\,ms,
+essentially matching the pre-regression 131\,ms result. We did
+not reproduce nonstiff parameter corruption from
+\texttt{make\_prob\_compatible} on this tested stack. The
+high-level \texttt{solve} API remains much slower
+(${\sim}$22{,}000\,ms fixed), so the reported Julia Lorenz
+numbers continue to come from lower-level batch APIs.
 
-The latest release (\texttt{DiffEqGPU~3.12.0} with Julia~1.11.3)
-shows a ${\sim}\JuliaLatestRegressionFixed\times$ regression on the nonstiff Lorenz
-benchmark (\JuliaLatestLorenzFixed\,ms vs.\ \JuliaLorenzFixed\,ms), with the
-\texttt{@benchmark} macro reporting hundreds of millions of
-allocations, suggesting a fundamentally different solve path.
-Robertson performance is similar across versions and---crucially---nearly
-invariant to tolerance (Table~\ref{tab:versions}), confirming
-that the bottleneck is per-step infrastructure overhead.
+\item \textbf{Robertson (stiff):} \texttt{DiffEqGPU~3.12.0} with
+Julia~1.11.3, using the \texttt{vectorized\_asolve} batch API
+with \texttt{make\_prob\_compatible}.
+The paper's pinned stack (2.1.0) does not export stiff GPU-kernel
+solvers; the earliest version with stiff support (2.5.1) lacks
+\texttt{make\_prob\_compatible}, causing \texttt{cu(probs)} to
+silently produce incorrect results.
+\end{itemize}
 
-The Python-side results are more stable: informal testing across
+The Python-side results are stable: informal testing across
 JAX~0.4 through~0.9 and Diffrax~0.5 through~0.7 suggests timings
 within ${\sim}$15\% of those reported here.
-Running the latest Julia stack on the V100 required a workaround
+Running Julia~1.11.3 on the V100 required a workaround
 for a bug in \texttt{CUDA\_Driver\_jll}~13.2, which loads a
 forwards-compatible driver that drops Volta
 support.\footnote{\texttt{JULIA\_CUDA\_USE\_COMPAT=false}
-bypasses this. We have reported the issue to the CUDA.jl
-maintainers.}
+bypasses this.}
 
 \subsection{Limitations}
 
 This study is specific to the Tesla~V100 and the
 Lorenz/Robertson problems.
 The stiff CUDA and JAX \texttt{vmap} Rosenbrock23 implementations
-are specialized to the Robertson system's $3 \times 3$ structure
-(analytic Jacobian, direct linear solve); generalizing to
+exploit the Robertson system's $3 \times 3$ structure with a
+direct linear solve; \texttt{DiffEqGPU.jl} receives an analytic
+Jacobian but uses a general-purpose linear solver.
+Generalizing the level-2 and level-4 implementations to
 arbitrary systems would require auto-generated Jacobians and
 adaptive linear solvers.
 All GPU benchmarks use float32; float64 comparisons may
@@ -615,14 +591,14 @@ When measured at comparable positions on the stack, the genuine
 advantage of \texttt{DiffEqGPU.jl}'s kernel generation over
 idiomatic JAX is $\RatioJAXJuliaFixed\times$ for fixed stepping---meaningful, but
 far from the headline figure.
-\texttt{DiffEqGPU.jl} occupies a valuable position for nonstiff
-problems, delivering near-hardware-floor performance through a
-high-level API; however, its general-purpose stiff kernels do not
-yet realize the same advantage---even a fully generic JAX
-\texttt{vmap} solver using autodiff Jacobians and an unstructured
-linear solve is $\RatioGenericJuliaRobertson\times$ faster on Robertson,
-indicating that the gap is architectural rather than a
-consequence of problem specialization.
+\texttt{DiffEqGPU.jl} occupies a valuable position at level~3,
+delivering near-hardware-floor performance for both nonstiff and
+stiff problems through its kernel-generation approach.
+For stiff problems, however, the choice of API matters: the batch
+\texttt{vectorized\_asolve} API achieves competitive performance,
+while the high-level \texttt{solve} API adds $>$400$\times$
+overhead---a finding that highlights how dispatch-layer costs can
+dominate kernel performance in ensemble GPU workloads.
 More broadly, cross-ecosystem benchmarks should identify each
 tool's position on the abstraction stack to avoid presenting
 framework-overhead ratios as language performance gaps.

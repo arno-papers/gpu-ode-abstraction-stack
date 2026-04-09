@@ -1,0 +1,38 @@
+======================================================================
+DiffEqGPU.jl Robertson Benchmark (Level 3, stiff)
+======================================================================
+CUDA device: Tesla V100-SXM2-32GB
+DiffEqGPU:   3.12.0
+Julia:       1.11.3
+Algorithm:   GPURosenbrock23
+Sweep:       k2 ∈ linspace(0, 10000.0, N)
+
+Verification (last trajectory, k2 ≈ 10000.0):
+  y=[1.782704e-02, 7.258602e-08, 9.821717e-01]  max_err=3.89e-05  [OK]
+
+=== N=1024 ===
+Warmup... done
+minimum = 0.135654 ms
+median  = 0.145028 ms
+
+=== N=10240 ===
+Warmup... done
+minimum = 0.13623 ms
+median  = 0.14475 ms
+
+=== N=102400 ===
+Warmup... done
+minimum = 0.641554 ms
+median  = 0.817135 ms
+
+=== N=1024000 ===
+Warmup... done
+minimum = 3.960159 ms
+median  = 4.009679 ms
+
+=== N=8388608 ===
+Warmup... done
+minimum = 28.368747 ms
+median  = 28.371649 ms
+
+Wrote results/julia_robertson.csv

@@ -5,22 +5,18 @@ Produces:
   - fig_scaling.pdf: log-log scaling plot (time vs N) for all 4 rungs
   - fig_bars.pdf: horizontal bar chart at N=8M showing rung gaps
   - fig_bars_stiff.pdf: horizontal bar chart for stiff Robertson at N=8M
+  - fig_scaling_stiff.pdf: log-log scaling for stiff Robertson
 
 Data sources (bar charts read from result files, never hardcoded):
   Lorenz:
-    - Diffrax:      results/diffrax_latest.out  (our rerun with block_until_ready)
+    - Diffrax:      results/diffrax_latest.out
     - JAX vmap:     results/jax_vmap_{fixed,adaptive}.csv
-    - DiffEqGPU.jl: results/julia_paper_lorenz.out  (our V100 rerun, paper-era stack)
+    - DiffEqGPU.jl: results/julia_lorenz.out
     - CUDA kernel:  results/cuda_lorenz_{fixed,adaptive}.csv
   Robertson:
     - JAX vmap:     results/jax_robertson.csv
     - DiffEqGPU.jl: results/julia_robertson.csv
     - CUDA kernel:  results/cuda_robertson.csv
-  Scaling figure:
-    - Diffrax:      GPUODEBenchmarks/paper_artifacts/data/Tesla_V100/JAX/
-    - DiffEqGPU.jl: GPUODEBenchmarks/paper_artifacts/data/Tesla_V100/Julia/
-    - JAX vmap:     results/jax_vmap_{fixed,adaptive}.csv
-    - CUDA kernel:  results/cuda_lorenz_{fixed,adaptive}.csv
 """
 
 import os
@@ -42,16 +38,12 @@ TARGET_N = 8_388_608
 COLORS = {
     "Diffrax":               "#d62728",  # red
     "JAX vmap":              "#ff7f0e",  # orange
-    "JAX autodiff+direct":   "#e8a000",  # amber
-    "JAX autodiff+generic":  "#c77c00",  # dark orange
     "DiffEqGPU.jl":         "#2ca02c",  # green
     "CUDA kernel":           "#1f77b4",  # blue
 }
 MARKERS = {
     "Diffrax":               "s",
     "JAX vmap":              "^",
-    "JAX autodiff+direct":   ">",
-    "JAX autodiff+generic":  "v",
     "DiffEqGPU.jl":         "o",
     "CUDA kernel":           "D",
 }
@@ -91,21 +83,26 @@ def load_diffrax_latest():
             float(adaptive.group(1)) if adaptive else None)
 
 
-def load_julia_paper_lorenz():
-    """Parse results/julia_paper_lorenz.out for fixed and adaptive times.
+def load_julia_lorenz():
+    """Load the paper's pre-regression Lorenz timings.
 
-    Format: two 'Minimum time: X ms' lines — first is fixed, second is adaptive.
+    The paper intentionally uses results/julia_paper_lorenz.out for the
+    DiffEqGPU Lorenz row because the latest tested stack still regresses
+    adaptive performance.
     """
+    # Keep the pre-regression Lorenz results in the paper.
+    # On the latest tested stack, fixed stepping can still match the
+    # old number, but adaptive remains substantially slower; see the
+    # paper's version-sensitivity discussion.
     path = os.path.join(RESULTS_DIR, "julia_paper_lorenz.out")
-    if not os.path.exists(path):
-        print(f"  WARNING: {path} not found")
-        return None, None
-    text = open(path).read()
-    times = re.findall(r"Minimum time:\s+([\d.]+)\s+ms", text)
-    if len(times) < 2:
-        print(f"  WARNING: could not parse two timings from {path}")
-        return None, None
-    return float(times[0]), float(times[1])
+    if os.path.exists(path):
+        text = open(path).read()
+        times = re.findall(r"Minimum time:\s+([\d.]+)\s+ms", text)
+        if len(times) >= 2:
+            return float(times[0]), float(times[1])
+
+    print(f"  WARNING: no Julia Lorenz results found")
+    return None, None
 
 
 def load_scaling_data():
@@ -184,7 +181,7 @@ def make_bar_figure(outpath="fig_bars.pdf"):
     jax_fixed = get_n8m_from_csv(os.path.join(RESULTS_DIR, "jax_vmap_fixed.csv"))
     jax_adaptive = get_n8m_from_csv(os.path.join(RESULTS_DIR, "jax_vmap_adaptive.csv"))
     diffrax_fixed, diffrax_adaptive = load_diffrax_latest()
-    julia_fixed, julia_adaptive = load_julia_paper_lorenz()
+    julia_fixed, julia_adaptive = load_julia_lorenz()
 
     missing = []
     for name, val in [("CUDA fixed", cuda_fixed), ("CUDA adaptive", cuda_adaptive),
@@ -265,8 +262,6 @@ def load_stiff_scaling_data():
     """Load Robertson scaling data from CSV files."""
     data = {}
     for label, fname in [("JAX vmap", "jax_robertson.csv"),
-                         ("JAX autodiff+direct", "jax_robertson_autodiff_direct.csv"),
-                         ("JAX autodiff+generic", "jax_robertson_generic.csv"),
                          ("CUDA kernel", "cuda_robertson.csv"),
                          ("DiffEqGPU.jl", "julia_robertson.csv")]:
         path = os.path.join(RESULTS_DIR, fname)
@@ -280,7 +275,7 @@ def make_stiff_scaling_figure(data, outpath="fig_scaling_stiff.pdf"):
     """Log-log scaling plot for stiff Robertson Rosenbrock23."""
     fig, ax = plt.subplots(1, 1, figsize=(5.5, 4.5))
 
-    for label in ["DiffEqGPU.jl", "JAX autodiff+generic", "JAX autodiff+direct", "JAX vmap", "CUDA kernel"]:
+    for label in ["JAX vmap", "DiffEqGPU.jl", "CUDA kernel"]:
         if label not in data:
             continue
         N, t = data[label]
@@ -305,8 +300,6 @@ def make_stiff_bar_figure(outpath="fig_bars_stiff.pdf"):
     """Horizontal bar chart for stiff Robertson at N=8M."""
     cuda_rob = get_n8m_from_csv(os.path.join(RESULTS_DIR, "cuda_robertson.csv"))
     jax_rob = get_n8m_from_csv(os.path.join(RESULTS_DIR, "jax_robertson.csv"))
-    jax_rob_ad = get_n8m_from_csv(os.path.join(RESULTS_DIR, "jax_robertson_autodiff_direct.csv"))
-    jax_rob_gen = get_n8m_from_csv(os.path.join(RESULTS_DIR, "jax_robertson_generic.csv"))
     julia_rob = get_n8m_from_csv(os.path.join(RESULTS_DIR, "julia_robertson.csv"))
 
     missing = []
@@ -320,13 +313,9 @@ def make_stiff_bar_figure(outpath="fig_bars_stiff.pdf"):
 
     methods = [
         ("CUDA kernel",   cuda_rob),
+        ("DiffEqGPU.jl",  julia_rob),
         ("JAX vmap",      jax_rob),
     ]
-    if jax_rob_ad is not None:
-        methods.append(("JAX autodiff+direct", jax_rob_ad))
-    if jax_rob_gen is not None:
-        methods.append(("JAX autodiff+generic", jax_rob_gen))
-    methods.append(("DiffEqGPU.jl",  julia_rob))
 
     fig, ax = plt.subplots(1, 1, figsize=(6, 2.5))
 
@@ -375,37 +364,6 @@ def make_stiff_bar_figure(outpath="fig_bars_stiff.pdf"):
     plt.close(fig)
 
 
-def load_julia_latest():
-    """Parse results/julia_latest.out for Lorenz fixed/adaptive and Robertson default/tight."""
-    path = os.path.join(RESULTS_DIR, "julia_latest.out")
-    if not os.path.exists(path):
-        print(f"  WARNING: {path} not found")
-        return {}
-    text = open(path).read()
-    out = {}
-    m = re.search(r"Fixed stepping.*?minimum = ([\d.]+) ms", text, re.DOTALL)
-    if m:
-        out["lorenz_fixed"] = float(m.group(1))
-    m = re.search(r"Adaptive stepping.*?minimum = ([\d.]+) ms", text, re.DOTALL)
-    if m:
-        out["lorenz_adaptive"] = float(m.group(1))
-    rob = re.findall(r"Robertson.*?minimum = ([\d.]+) ms", text, re.DOTALL)
-    if len(rob) >= 1:
-        out["robertson_default"] = float(rob[0])
-    if len(rob) >= 2:
-        out["robertson_tight"] = float(rob[1])
-    return out
-
-
-def load_julia_robertson_25_tight():
-    """Parse results/julia_robertson_25.out for tight tolerance time."""
-    path = os.path.join(RESULTS_DIR, "julia_robertson_25.out")
-    if not os.path.exists(path):
-        return None
-    text = open(path).read()
-    # Tight tolerance section is after "=== Robertson tight tolerances ==="
-    m = re.search(r"tight tolerances.*?minimum = ([\d.]+) ms", text, re.DOTALL | re.IGNORECASE)
-    return float(m.group(1)) if m else None
 
 
 def fmt_ms(val):
@@ -450,42 +408,40 @@ def load_verification_data():
                 rows.append(("Lorenz", 4, "CUDA kernel", label, float(m.group(1))))
 
     # Julia Lorenz (Level 3)
-    path = os.path.join(RESULTS_DIR, "julia_paper_lorenz.out")
+    path = os.path.join(RESULTS_DIR, "julia_lorenz.out")
+    if not os.path.exists(path):
+        path = os.path.join(RESULTS_DIR, "julia_paper_lorenz.out")
     if os.path.exists(path):
         text = open(path).read()
-        m = re.search(r"Verification.*?max_err=([\d.e+-]+)", text)
+        m = re.search(r"max_err=([\d.e+-]+)", text)
         if m:
-            rows.append(("Lorenz", 3, "DiffEqGPU.jl", "Tsit5 fixed", float(m.group(1))))
+            rows.append(("Lorenz", 3, "DiffEqGPU.jl", "Tsit5 adaptive", float(m.group(1))))
 
     # JAX Robertson (Level 2)
     path = os.path.join(RESULTS_DIR, "jax_robertson.out")
     if os.path.exists(path):
         text = open(path).read()
-        m = re.search(r"max_err=([\d.e+-]+)", text)
+        m = re.search(r"Overall max_err=([\d.e+-]+)", text)
+        if not m:
+            m = re.search(r"max_err=([\d.e+-]+)", text)
         if m:
             rows.append(("Robertson", 2, "JAX vmap", "Rosenbrock23", float(m.group(1))))
-
-    # JAX Robertson generic (Level 2, autodiff)
-    path = os.path.join(RESULTS_DIR, "jax_robertson_generic.out")
-    if os.path.exists(path):
-        text = open(path).read()
-        m = re.search(r"max_err=([\d.e+-]+)", text)
-        if m:
-            rows.append(("Robertson", 2, "JAX vmap (generic)", "Rosenbrock23", float(m.group(1))))
 
     # CUDA Robertson (Level 4)
     path = os.path.join(RESULTS_DIR, "cuda_robertson.out")
     if os.path.exists(path):
         text = open(path).read()
-        m = re.search(r"Rosenbrock23-CUDA.*?max_err=([\d.e+-]+)", text, re.DOTALL)
+        m = re.search(r"Overall max_err=([\d.e+-]+)", text)
+        if not m:
+            m = re.search(r"max_err=([\d.e+-]+)", text)
         if m:
             rows.append(("Robertson", 4, "CUDA kernel", "Rosenbrock23", float(m.group(1))))
 
     # Julia Robertson (Level 3)
-    path = os.path.join(RESULTS_DIR, "julia_robertson_25.out")
+    path = os.path.join(RESULTS_DIR, "julia_robertson.out")
     if os.path.exists(path):
         text = open(path).read()
-        m = re.search(r"Verification.*?max_err=([\d.e+-]+)", text)
+        m = re.search(r"max_err=([\d.e+-]+)", text)
         if m:
             rows.append(("Robertson", 3, "DiffEqGPU.jl", "Rosenbrock23", float(m.group(1))))
 
@@ -531,7 +487,7 @@ def generate_data_macros(outpath="data_macros.tex"):
     jax_f = get_n8m_from_csv(os.path.join(RESULTS_DIR, "jax_vmap_fixed.csv"))
     jax_a = get_n8m_from_csv(os.path.join(RESULTS_DIR, "jax_vmap_adaptive.csv"))
     dfx_f, dfx_a = load_diffrax_latest()
-    jul_f, jul_a = load_julia_paper_lorenz()
+    jul_f, jul_a = load_julia_lorenz()
 
     if cuda_f is not None: macros["CUDALorenzFixed"] = cuda_f
     if cuda_a is not None: macros["CUDALorenzAdaptive"] = cuda_a
@@ -551,22 +507,6 @@ def generate_data_macros(outpath="data_macros.tex"):
     if jax_rob is not None: macros["JAXRobertson"] = jax_rob
     if julia_rob is not None: macros["JuliaRobertson"] = julia_rob
 
-    # JAX Robertson variants (autodiff Jacobian)
-    jax_rob_ad = get_n8m_from_csv(os.path.join(RESULTS_DIR, "jax_robertson_autodiff_direct.csv"))
-    jax_rob_gen = get_n8m_from_csv(os.path.join(RESULTS_DIR, "jax_robertson_generic.csv"))
-    if jax_rob_ad is not None: macros["JAXRobertsonAutodiffDirect"] = jax_rob_ad
-    if jax_rob_gen is not None: macros["JAXRobertsonGeneric"] = jax_rob_gen
-
-    # Julia Robertson tight tolerance (DiffEqGPU 2.5.1)
-    rob_tight = load_julia_robertson_25_tight()
-    if rob_tight is not None: macros["JuliaRobertsonTight"] = rob_tight
-
-    # Julia latest (version sensitivity)
-    latest = load_julia_latest()
-    for key, val in latest.items():
-        name = "JuliaLatest" + key.replace("_", " ").title().replace(" ", "")
-        macros[name] = val
-
     # Derived ratios — Lorenz
     if dfx_f and jax_f:
         macros["RatioDiffraxJAXFixed"] = dfx_f / jax_f
@@ -579,26 +519,14 @@ def generate_data_macros(outpath="data_macros.tex"):
     if cuda_a and jul_a:
         macros["RatioJuliaCUDAAdaptive"] = jul_a / cuda_a
 
-    # Derived ratios — Robertson
-    if cuda_rob and jax_rob:
-        macros["RatioCUDAJAXRobertson"] = jax_rob / cuda_rob
-    if jax_rob and julia_rob:
-        macros["RatioJAXJuliaRobertson"] = julia_rob / jax_rob
+    # Derived ratios — Robertson (CUDA < DiffEqGPU < JAX ordering)
     if cuda_rob and julia_rob:
         macros["RatioCUDAJuliaRobertson"] = julia_rob / cuda_rob
-    if jax_rob_gen is not None and julia_rob:
-        macros["RatioGenericJuliaRobertson"] = julia_rob / jax_rob_gen
-    if jax_rob is not None and jax_rob_gen is not None:
-        macros["RatioSpecializedGenericRobertson"] = jax_rob_gen / jax_rob
+    if julia_rob and jax_rob:
+        macros["RatioJuliaJAXRobertson"] = jax_rob / julia_rob
+    if cuda_rob and jax_rob:
+        macros["RatioCUDAJAXRobertson"] = jax_rob / cuda_rob
 
-    # Robertson tolerance sensitivity
-    if julia_rob and rob_tight:
-        pct = abs(rob_tight - julia_rob) / julia_rob * 100
-        macros["JuliaRobertsonTolPct"] = pct
-
-    # Julia latest regression ratio
-    if "lorenz_fixed" in latest and jul_f:
-        macros["JuliaLatestRegressionFixed"] = latest["lorenz_fixed"] / jul_f
 
     # Write tex file
     with open(outpath, "w") as f:

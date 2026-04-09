@@ -2,7 +2,7 @@
 
 ## What This Is
 
-An investigation into the performance claims of [Utkarsh et al. (2023)](https://doi.org/10.1016/j.cma.2023.116591), which claims Julia's `DiffEqGPU.jl` is **57-322x faster** than JAX for solving ensembles of ODEs on GPU. We show the gap is almost entirely Diffrax library overhead, not a fundamental limitation of JAX or Python. For stiff problems, even a fully generic JAX solver (autodiff Jacobian, no problem-specific knowledge) is 17x faster than DiffEqGPU.jl.
+An investigation into the performance claims of [Utkarsh et al. (2023)](https://doi.org/10.1016/j.cma.2023.116591), which claims Julia's `DiffEqGPU.jl` is **57-322x faster** than JAX for solving ensembles of ODEs on GPU. We show the gap is almost entirely Diffrax library overhead, not a fundamental limitation of JAX or Python. For stiff problems, DiffEqGPU.jl's batch GPU API (`vectorized_asolve`) achieves competitive performance between CUDA and JAX vmap, but the high-level `solve` API adds >400x overhead.
 
 ## Build
 
@@ -26,12 +26,11 @@ All numbers in the paper come from `data_macros.tex` and `validation_table.tex`,
 | `generate_figures.py` | Figures, data macros, and validation table from results/ |
 | `generate_validation_figure.py` | Validation plots (SciPy reference, runs locally) |
 | `lorenz_jax.py` | JAX vmap Tsit5 Lorenz (Level 2, nonstiff) |
-| `robertson_jax.py` | JAX vmap Rosenbrock23 Robertson (Level 2, stiff, specialized) |
-| `robertson_jax_generic.py` | JAX vmap Rosenbrock23 Robertson (Level 2, autodiff + generic solve) |
+| `robertson_jax.py` | JAX vmap Rosenbrock23 Robertson (Level 2, stiff) |
 | `lorenz_cuda.py` | Direct CUDA Lorenz Tsit5 kernels via CuPy (Level 4) |
 | `robertson_cuda.py` | Direct CUDA Robertson Rosenbrock23 kernel (Level 4) |
 | `lorenz_julia.jl` | DiffEqGPU GPUTsit5 Lorenz benchmark (Level 3) |
-| `robertson_julia.jl` | DiffEqGPU GPURosenbrock23 Robertson benchmark (Level 3) |
+| `robertson_julia.jl` | DiffEqGPU GPURosenbrock23 Robertson via vectorized_asolve (Level 3) |
 | `GPUODEBenchmarks/` | Original paper's cloned repository (reference data) |
 | `results/` | Benchmark output logs and CSVs (produced by Snakefile rules) |
 
@@ -46,7 +45,7 @@ ssh -4 -MNf -o ControlMaster=yes -o ControlPersist=24h \
 ### Upload and run
 ```bash
 scp -4 -o "ControlPath=~/.ssh/cm-tier2-%r@%h:%p" \
-  Snakefile lorenz_jax.py robertson_jax.py robertson_jax_generic.py \
+  Snakefile lorenz_jax.py robertson_jax.py \
   lorenz_cuda.py robertson_cuda.py lorenz_julia.jl robertson_julia.jl \
   tier2:/data/leuven/325/vsc32553/gpu_bench/
 
